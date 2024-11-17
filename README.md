@@ -21,12 +21,12 @@ This script helps you generate Kubernetes Deployment and Service manifests for a
 Run the script with the required flags to generate your Kubernetes manifests.
 
 ```bash
-./generate-deployment.sh [options]
+./gen.sh [options]
 ```
 ## Examples
 ### Generate Deployment and Service Manifests
 ```bash
-./generate-deployment.sh \
+./gen.sh \
 --env prod \
 --app-name my-app \
 --image my-app-image:v1 \
@@ -42,7 +42,7 @@ This will generate the Kubernetes Deployment and Service manifests for my-app, u
 
 ### Generate Deployment Only
 ```bash
-./generate-deployment.sh \
+./gen.sh \
 --env prod \
 --app-name my-app \
 --image my-app-image:v1 \
@@ -51,7 +51,7 @@ This will generate the Kubernetes Deployment and Service manifests for my-app, u
 This will only generate the Kubernetes Deployment manifest.
 ### Generate Deployment with ConfigMap and Secret Data
 ```bash
-./generate-deployment.sh \
+./gen.sh \
 --env prod \
 --app-name my-app \
 --image my-app-image:v1 \
