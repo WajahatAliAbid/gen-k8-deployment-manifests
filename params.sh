@@ -26,13 +26,14 @@ _opt_cpu_limit=""
 _opt_memory_limit=""
 _opt_output="$(pwd)/dist"
 _opt_gen_deployment=false
-_opt_gen_configmap=false
 _opt_gen_service=false
 _opt_gen_hap=false
+_opt_skip_empty=false
 _opt_replicas=1
 _opt_max_replicas=1
 _opt_ports=""
 declare -A configmap_data
+declare -a secret_data
 while [ "$1" != "" ]; do
     case $1 in
         --env )
@@ -68,14 +69,27 @@ while [ "$1" != "" ]; do
                 fi
             done
             ;;
+        --secret-data )
+            shift;
+            # Handle --configmap-data parameter, which could be key or key=value pairs
+            IFS=',' read -ra secret_items <<< "$1"
+            for item in "${secret_items[@]}"; do
+                if [[ "$item" == *"="* ]]; then
+                    IFS='=' read -r key value <<< "$item"
+                    secret_data["$key"]="$value"
+                else
+                    secret_data["$item"]=""
+                fi
+            done
+            ;;
         --generate-deployment )
             _opt_gen_deployment=true;;
-        --generate-configmap )
-            _opt_gen_configmap=true;;
         --generate-service )
             _opt_gen_service=true;;
         --generate-hap )
             _opt_gen_hap=true;;
+        --skip-empty )
+            _opt_skip_empty=true;;
         --out )
             shift; _opt_output=$1;;
         * )
@@ -207,6 +221,35 @@ EOF
 
 generate_configmap() {
     echo "Generating Configmap"
+    __env_kvp=""
+    _underscore_env_name="${_opt_env//-/_}"
+    for key in "${!configmap_data[@]}"; do
+        __value=""
+        __default_value="${configmap_data[$key]}"
+        __env_key="${_underscore_env_name^^}_${key}"
+        __fallback_key="${key}"
+        if [[ -v "$__env_key" ]]; then
+            __value="${!__env_key}"
+        elif [[ -v "$__fallback_key" ]]; then
+            __value="${!__fallback_key}"
+        fi
+        # If __value is empty, use the default value
+        if [ -z "$__value" ]; then
+            __value="${__default_value}"
+        fi
+        if [ -z "$__value" ]; then
+            if [ "$_opt_skip_empty" = true ]; then
+                # Value is not defined, skip
+                continue
+            fi
+        fi
+        __env_kvp="${__env_kvp}  $key: \"$__value\"
+"
+    done
+    if [ ! -n "$__env_kvp" ]; then
+        echo "Configmap data is empty, skipping"
+        return
+    fi
     cat <<EOF >$_opt_output/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -217,18 +260,58 @@ metadata:
     app: $_opt_app_name
     env: $_opt_env
 data:
+$__env_kvp
 EOF
-    for key in "${!configmap_data[@]}"; do
-        value="${configmap_data[$key]}"
-
-        echo "  $key: \"$value\"" >>$_opt_output/configmap.yaml
-    done
 }
+
+generate_secrets() {
+    __env_kvp=""
+    _underscore_env_name="${_opt_env//-/_}"
+    for key in "${!secret_data[@]}"; do
+        __value=""
+        __default_value="${secret_data[$key]}"
+        __env_key="${_underscore_env_name^^}_${key}"
+        __fallback_key="${key}"
+        if [[ -v "$__env_key" ]]; then
+            __value="${!__env_key}"
+        elif [[ -v "$__fallback_key" ]]; then
+            __value="${!__fallback_key}"
+        fi
+        # If __value is empty, use the default value
+        if [ -z "$__value" ]; then
+            __value="${__default_value}"
+        fi
+        if [ -z "$__value" ]; then
+            if [ "$_opt_skip_empty" = true ]; then
+                # Value is not defined, skip
+                continue
+            fi
+        fi
+        __env_kvp="${__env_kvp}  $key: \"$__value\"
+"
+    done
+    if [ ! -n "$__env_kvp" ]; then
+        echo "Secrets data is empty, skipping"
+        return
+    fi
+    echo "Generating Secrets"
+    cat <<EOF >$_opt_output/secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: $_opt_app_name
+  namespace: $_opt_env
+  labels:
+    app: $_opt_app_name
+    env: $_opt_env
+data:
+$__env_kvp
+EOF
+}
+
+generate_configmap
+generate_secrets
 
 if [ "$_opt_gen_deployment" = true ]; then
     generate_deployment
-fi
-
-if [ "$_opt_gen_configmap" = true ]; then
-    generate_configmap
 fi
