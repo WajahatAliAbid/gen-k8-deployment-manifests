@@ -43,7 +43,7 @@ _opt_ports=""
 _opt_service_type="ClusterIP"
 _opt_hpa_utilization_threshold=70
 declare -A configmap_data
-declare -a secret_data
+declare -A secret_data
 while [ "$1" != "" ]; do
     case $1 in
         --env )
