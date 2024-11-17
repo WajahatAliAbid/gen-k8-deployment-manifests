@@ -22,9 +22,11 @@ if [ "$1" == "--help" ]; then
     echo "                        Valid values are: ClusterIP, NodePort, LoadBalancer, ExternalName"
     echo "  --service-ports       Comma-separated list of ports for the Service (default: all ports from --ports)"
     echo "  --generate-deployment Generate deployment manifest"
-    echo "  --generate-hpa        Generate horizontal pod autoscaler manifest"
+    echo "  --generate-service    Generate service manifest"
+    echo "  --hpa-utilization-threshold CPU and memory utilization target for HPA (default: 70)"
     echo "  --skip-empty          Skip empty ConfigMap/Secret entries (default: false)"
     echo "  --out                 Output directory (default: ./dist)"
+    echo "  --verbose             Verbose mode (default: false)"
     exit 0
 fi
 _opt_cpu="100m"
@@ -34,12 +36,12 @@ _opt_memory_limit=""
 _opt_output="$(pwd)/dist"
 _opt_gen_deployment=false
 _opt_gen_service=false
-_opt_gen_hap=false
 _opt_skip_empty=false
 _opt_replicas=1
 _opt_max_replicas=1
 _opt_ports=""
 _opt_service_type="ClusterIP"
+_opt_hpa_utilization_threshold=70
 declare -A configmap_data
 declare -a secret_data
 while [ "$1" != "" ]; do
@@ -98,12 +100,14 @@ while [ "$1" != "" ]; do
             _opt_gen_deployment=true;;
         --generate-service )
             _opt_gen_service=true;;
-        --generate-hap )
-            _opt_gen_hap=true;;
+        --hpa-utilization-threshold )
+            shift; _opt_hpa_utilization_threshold=$1;;
         --skip-empty )
             _opt_skip_empty=true;;
         --out )
             shift; _opt_output=$1;;
+        --verbose )
+            set -x;;
         * )
             echo "$1 unknown parameter"
             exit 1
@@ -238,6 +242,14 @@ for port in "${service_ports_array[@]}"; do
         exit 1
     fi
 done
+
+# Validate HPA utilization threshold (1-100)
+if [ -n "$_opt_hpa_utilization_threshold" ]; then
+    if ! [[ "$_opt_hpa_utilization_threshold" =~ ^[0-9]+$ ]] || [ "$_opt_hpa_utilization_threshold" -lt 1 ] || [ "$_opt_hpa_utilization_threshold" -gt 100 ]; then
+        echo "Error: --hpa-utilization-threshold must be a positive integer between 1 and 100."
+        exit 1
+    fi
+fi
 ################## End Validation ################
 
 echo "Environment: $_opt_env"
@@ -430,6 +442,40 @@ spec:
 EOF
 }
 
+generate_hpa() {
+    echo "Generating HPA"
+    cat <<EOF >$_opt_output/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: $_opt_env-$_opt_app_name
+  namespace: $_opt_env
+  labels:
+    app: $_opt_app_name
+    env: $_opt_env
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: $_opt_env-$_opt_app_name
+  minReplicas: $_opt_replicas
+  maxReplicas: $_opt_max_replicas
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: $_opt_hpa_utilization_threshold
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: $_opt_hpa_utilization_threshold
+EOF
+}
+
 _gen_configmap=false
 _gen_secrets=false
 generate_configmap
@@ -441,4 +487,8 @@ fi
 
 if [ "$_opt_gen_service" = true ]; then
     generate_service
+fi
+
+if [ "$_opt_max_replicas" -gt "$_opt_replicas" ]; then
+    generate_hpa
 fi
