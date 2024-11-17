@@ -32,7 +32,7 @@ _opt_gen_hap=false
 _opt_replicas=1
 _opt_max_replicas=1
 _opt_ports=""
-_opt_configmap=""
+declare -A configmap_data
 while [ "$1" != "" ]; do
     case $1 in
         --env )
@@ -56,7 +56,18 @@ while [ "$1" != "" ]; do
         --ports )
             shift; _opt_ports=$1;;
         --configmap-data )
-            shift; _opt_configmap=$1;;
+            shift;
+            # Handle --configmap-data parameter, which could be key or key=value pairs
+            IFS=',' read -ra configmap_items <<< "$1"
+            for item in "${configmap_items[@]}"; do
+                if [[ "$item" == *"="* ]]; then
+                    IFS='=' read -r key value <<< "$item"
+                    configmap_data["$key"]="$value"
+                else
+                    configmap_data["$item"]=""
+                fi
+            done
+            ;;
         --generate-deployment )
             _opt_gen_deployment=true;;
         --generate-configmap )
@@ -137,7 +148,6 @@ echo "Replicas: $_opt_replicas"
 echo "Max Replicas: $_opt_max_replicas"
 echo "Image: $_opt_image"
 echo "Ports: $_opt_ports"
-echo "Configmap: $_opt_configmap"
 echo "Output: $_opt_output"
 echo "Generate Deployment: $_opt_gen_deployment"
 echo "Generate Configmap: $_opt_gen_configmap"
@@ -207,9 +217,12 @@ metadata:
     app: $_opt_app_name
     env: $_opt_env
 data:
-  app: $_opt_app_name
-  env: $_opt_env
 EOF
+    for key in "${!configmap_data[@]}"; do
+        value="${configmap_data[$key]}"
+
+        echo "  $key: \"$value\"" >>$_opt_output/configmap.yaml
+    done
 }
 
 if [ "$_opt_gen_deployment" = true ]; then
