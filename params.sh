@@ -20,6 +20,7 @@ if [ "$1" == "--help" ]; then
     echo "                        (e.g., --secret-data secret1=value1,secret2=value2)"
     echo "  --service-type        Service type (default: ClusterIP)"
     echo "                        Valid values are: ClusterIP, NodePort, LoadBalancer, ExternalName"
+    echo "  --service-ports       Comma-separated list of ports for the Service (default: all ports from --ports)"
     echo "  --generate-deployment Generate deployment manifest"
     echo "  --generate-hpa        Generate horizontal pod autoscaler manifest"
     echo "  --skip-empty          Skip empty ConfigMap/Secret entries (default: false)"
@@ -63,6 +64,8 @@ while [ "$1" != "" ]; do
             shift; _opt_max_replicas=$1;;
         --ports )
             shift; _opt_ports=$1;;
+        --service-ports )
+            shift; _opt_service_ports=$1;;
         --configmap-data )
             shift;
             # Handle --configmap-data parameter, which could be key or key=value pairs
@@ -113,6 +116,9 @@ if [ -z "$_opt_cpu_limit" ]; then
 fi
 if [ -z "$_opt_memory_limit" ]; then
     _opt_memory_limit="$_opt_memory"
+fi
+if [ -z "$_opt_service_ports" ]; then
+    _opt_service_ports="$_opt_ports"
 fi
 ################ End Setting Defaults ################
 ################# Validation ################
@@ -222,6 +228,16 @@ if ! [[ " ${_valid_Service_types[@]} " =~ " $_opt_service_type " ]]; then
     echo "Error: Invalid --service-type '$_opt_service_type'. Valid values are: ${_valid_Service_types[@]}"
     exit 1
 fi
+
+# Validate service-ports to ensure they are part of the --ports list
+IFS=',' read -ra service_ports_array <<< "$_opt_service_ports"
+IFS=',' read -ra all_ports_array <<< "$_opt_ports"
+for port in "${service_ports_array[@]}"; do
+    if ! [[ " ${all_ports_array[@]} " =~ " $port " ]]; then
+        echo "Error: Port $port in --service-ports is not valid. It must be part of the --ports list."
+        exit 1
+    fi
+done
 ################## End Validation ################
 
 echo "Environment: $_opt_env"
@@ -390,6 +406,12 @@ EOF
 
 generate_service() {
     echo "Generating Service"
+    for port in "${service_ports_array[@]}"; do
+        __service_ports+="
+    - protocol: TCP
+      port: $port
+      targetPort: $port"
+    done
     cat <<EOF >$_opt_output/service.yaml
 apiVersion: v1
 kind: Service
@@ -404,10 +426,7 @@ spec:
   selector:
     app: $_opt_app_name
     env: $_opt_env
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 8080
+  $(if [ -n "$__service_ports" ]; then echo "ports: $__service_ports"; fi)
 EOF
 }
 
