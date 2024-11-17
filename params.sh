@@ -18,6 +18,8 @@ if [ "$1" == "--help" ]; then
     echo "                        (e.g., --configmap-data key1=value1,key2=value2)"
     echo "  --secret-data         Comma-separated list of key=value pairs for Secret"
     echo "                        (e.g., --secret-data secret1=value1,secret2=value2)"
+    echo "  --service-type        Service type (default: ClusterIP)"
+    echo "                        Valid values are: ClusterIP, NodePort, LoadBalancer, ExternalName"
     echo "  --generate-deployment Generate deployment manifest"
     echo "  --generate-hpa        Generate horizontal pod autoscaler manifest"
     echo "  --skip-empty          Skip empty ConfigMap/Secret entries (default: false)"
@@ -36,6 +38,7 @@ _opt_skip_empty=false
 _opt_replicas=1
 _opt_max_replicas=1
 _opt_ports=""
+_opt_service_type="ClusterIP"
 declare -A configmap_data
 declare -a secret_data
 while [ "$1" != "" ]; do
@@ -86,6 +89,8 @@ while [ "$1" != "" ]; do
                 fi
             done
             ;;
+        --service-type )
+            shift; _opt_service_type=$1;;
         --generate-deployment )
             _opt_gen_deployment=true;;
         --generate-service )
@@ -207,6 +212,14 @@ fi
 # Ensure that the environment name is alphanumeric and possibly with underscores/dashes
 if ! [[ "$_opt_env" =~ ^[a-zA-Z0-9_-]+$ ]]; then
     echo "Error: --env must be alphanumeric, and can contain underscores or dashes."
+    exit 1
+fi
+
+_valid_Service_types=("ClusterIP" "NodePort" "LoadBalancer" "ExternalName")
+
+# Check if --service-type is valid
+if ! [[ " ${_valid_Service_types[@]} " =~ " $_opt_service_type " ]]; then
+    echo "Error: Invalid --service-type '$_opt_service_type'. Valid values are: ${_valid_Service_types[@]}"
     exit 1
 fi
 ################## End Validation ################
@@ -375,6 +388,29 @@ EOF
     _gen_secrets=true
 }
 
+generate_service() {
+    echo "Generating Service"
+    cat <<EOF >$_opt_output/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: $_opt_env-$_opt_app_name
+  namespace: $_opt_env
+  labels:
+    app: $_opt_app_name
+    env: $_opt_env
+spec:
+  type: $_opt_service_type
+  selector:
+    app: $_opt_app_name
+    env: $_opt_env
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+EOF
+}
+
 _gen_configmap=false
 _gen_secrets=false
 generate_configmap
@@ -382,4 +418,8 @@ generate_secrets
 
 if [ "$_opt_gen_deployment" = true ]; then
     generate_deployment
+fi
+
+if [ "$_opt_gen_service" = true ]; then
+    generate_service
 fi
