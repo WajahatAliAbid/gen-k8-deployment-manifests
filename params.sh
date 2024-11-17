@@ -227,12 +227,29 @@ generate_deployment() {
     else
         _deployment_ports=""
     fi
+    # Check if configmap.yaml exists and add the environment variables if it does
+    _configmap_env_vars=""
+    if [ "$_gen_configmap" == true ]; then
+        _configmap_env_vars="
+        envFrom:
+        - configMapRef:
+            name: $_opt_env-$_opt_app_name"
+    fi
+
+    # Check if secrets.yaml exists and add the environment variables if it does
+    _secret_env_vars=""
+    if [ "$_gen_secrets" == true ]; then
+        _secret_env_vars="
+        envFrom:
+        - secretRef:
+            name: $_opt_env-$_opt_app_name"
+    fi
     echo "Generating Deployment"
     cat <<EOF >$_opt_output/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: $_opt_app_name
+  name: $_opt_env-$_opt_app_name
   namespace: $_opt_env
   labels:
     app: $_opt_app_name
@@ -255,12 +272,14 @@ spec:
         imagePullPolicy: IfNotPresent
         resources:
           requests:
-            cpu: $_opt_cpu
-            memory: $_opt_memory
+            cpu: "$_opt_cpu"
+            memory: "$_opt_memory"
           limits:
-            cpu: $_opt_cpu_limit
-            memory: $_opt_memory_limit
+            cpu: "$_opt_cpu_limit"
+            memory: "$_opt_memory_limit"
         $(if [ -n "$_deployment_ports" ]; then echo "$_deployment_ports"; fi)
+        $(if [ -n "$_configmap_env_vars" ]; then echo "$_configmap_env_vars"; fi)
+        $(if [ -n "$_secret_env_vars" ]; then echo "$_secret_env_vars"; fi)
 EOF
 }
 
@@ -299,7 +318,7 @@ generate_configmap() {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: $_opt_app_name
+  name: $_opt_env-$_opt_app_name
   namespace: $_opt_env
   labels:
     app: $_opt_app_name
@@ -307,6 +326,7 @@ metadata:
 data:
 $__env_kvp
 EOF
+    _gen_configmap=true
 }
 
 generate_secrets() {
@@ -344,7 +364,7 @@ generate_secrets() {
 apiVersion: v1
 kind: Secret
 metadata:
-  name: $_opt_app_name
+  name: $_opt_env-$_opt_app_name
   namespace: $_opt_env
   labels:
     app: $_opt_app_name
@@ -352,8 +372,11 @@ metadata:
 data:
 $__env_kvp
 EOF
+    _gen_secrets=true
 }
 
+_gen_configmap=false
+_gen_secrets=false
 generate_configmap
 generate_secrets
 
