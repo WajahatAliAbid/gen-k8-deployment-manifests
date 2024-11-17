@@ -7,6 +7,7 @@ if [ "$1" == "--help" ]; then
     echo "  --env                           Environment (required)"
     echo "  --app-name                      Application name (required)"
     echo "  --image                         Container image (required)"
+    echo "  --image-pull-policy             Image pull policy (default: IfNotPresent)"
     echo "  --cpu                           CPU request (default: 100m)"
     echo "  --memory                        Memory request (default: 512Mi)"
     echo "  --cpu-limit                     CPU limit (default: same as request)"
@@ -24,6 +25,7 @@ if [ "$1" == "--help" ]; then
     echo "  --generate-deployment           Generate deployment manifest"
     echo "  --generate-service              Generate service manifest"
     echo "  --hpa-utilization-threshold     CPU and memory utilization target for HPA (default: 70)"
+    echo "  --termination-grace-period      Grace period for pod termination (default: none)"
     echo "  --skip-empty                    Skip empty ConfigMap/Secret entries (default: false)"
     echo "  --out                           Output directory (default: ./dist)"
     echo "  --verbose                       Verbose mode (default: false)"
@@ -42,6 +44,8 @@ _opt_max_replicas=1
 _opt_ports=""
 _opt_service_type="ClusterIP"
 _opt_hpa_utilization_threshold=70
+_opt_termination_grace_period=""
+_opt_image_pull_policy="IfNotPresent"
 declare -A configmap_data
 declare -A secret_data
 while [ "$1" != "" ]; do
@@ -102,6 +106,10 @@ while [ "$1" != "" ]; do
             _opt_gen_service=true;;
         --hpa-utilization-threshold )
             shift; _opt_hpa_utilization_threshold=$1;;
+        --termination-grace-period )
+            shift; _opt_termination_grace_period=$1;;
+        --image-pull-policy )
+            shift; _opt_image_pull_policy=$1;;
         --skip-empty )
             _opt_skip_empty=true;;
         --out )
@@ -155,6 +163,18 @@ fi
 if [ -z "$_opt_replicas" ]; then
     echo "Error: --replicas is required"
     exit 1
+fi
+
+# termination grace period is not empty then make sure it's a postive integer
+if [ -n "$_opt_termination_grace_period" ]; then
+    if ! [[ "$_opt_termination_grace_period" =~ ^[0-9]+$ ]] || [ "$_opt_termination_grace_period" -lt 0 ]; then
+        echo "Error: --termination-grace-period must be a non-negative integer"
+        exit 1
+    fi
+    if [ "$_opt_termination_grace_period" -eq 0 ]; then
+        echo "Error: --termination-grace-period cannot be 0"
+        exit 1
+    fi
 fi
 
 # Validate replicas as a positive integer
@@ -250,6 +270,12 @@ if [ -n "$_opt_hpa_utilization_threshold" ]; then
         exit 1
     fi
 fi
+
+# Validate image pull policy
+if ! [[ "$_opt_image_pull_policy" =~ ^(Never|IfNotPresent|Always)$ ]]; then
+    echo "Error: Invalid --image-pull-policy '$_opt_image_pull_policy'. Valid values are: Never, IfNotPresent, Always."
+    exit 1
+fi
 ################## End Validation ################
 
 echo "Environment: $_opt_env"
@@ -307,10 +333,11 @@ spec:
         app: $_opt_app_name
         env: $_opt_env
     spec:
+      $(if [ -n "$_opt_termination_grace_period" ]; then echo "terminationGracePeriodSeconds: $_opt_termination_grace_period"; fi)
       containers:
       - name: $_opt_app_name
         image: $_opt_image
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: $_opt_image_pull_policy
         resources:
           requests:
             cpu: "$_opt_cpu"
