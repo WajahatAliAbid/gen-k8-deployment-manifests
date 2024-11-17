@@ -4,20 +4,24 @@ set -eo pipefail
 if [ "$1" == "--help" ]; then
     echo "Usage: $0 [options]"
     echo "Options:"
-    echo "  --env               Environment (required)"
-    echo "  --app-name          Application name (required)"
-    echo "  --image             Container image (required)"
-    echo "  --cpu               CPU request (default: 100m)"
-    echo "  --memory            Memory request (default: 512Mi)"
-    echo "  --cpu-limit         CPU limit (default: same as request)"
-    echo "  --memory-limit      Memory limit (default: same as request)"
-    echo "  --replicas          Number of replicas (default: 1)"
-    echo "  --max-replicas      Max replicas for scaling (default: 1)"
-    echo "  --ports             Comma-separated list of container ports"
-    echo "  --generate-deployment  Generate deployment manifest"
-    echo "  --generate-service     Generate service manifest"
-    echo "  --generate-configmap   Generate configmap manifest"
-    echo "  --out               Output directory (default: ./dist)"
+    echo "  --env                 Environment (required)"
+    echo "  --app-name            Application name (required)"
+    echo "  --image               Container image (required)"
+    echo "  --cpu                 CPU request (default: 100m)"
+    echo "  --memory              Memory request (default: 512Mi)"
+    echo "  --cpu-limit           CPU limit (default: same as request)"
+    echo "  --memory-limit        Memory limit (default: same as request)"
+    echo "  --replicas            Number of replicas (default: 1)"
+    echo "  --max-replicas        Max replicas for scaling (default: 1)"
+    echo "  --ports               Comma-separated list of container ports"
+    echo "  --configmap-data      Comma-separated list of key=value pairs for ConfigMap"
+    echo "                        (e.g., --configmap-data key1=value1,key2=value2)"
+    echo "  --secret-data         Comma-separated list of key=value pairs for Secret"
+    echo "                        (e.g., --secret-data secret1=value1,secret2=value2)"
+    echo "  --generate-deployment Generate deployment manifest"
+    echo "  --generate-hpa        Generate horizontal pod autoscaler manifest"
+    echo "  --skip-empty          Skip empty ConfigMap/Secret entries (default: false)"
+    echo "  --out                 Output directory (default: ./dist)"
     exit 0
 fi
 _opt_cpu="100m"
@@ -71,7 +75,7 @@ while [ "$1" != "" ]; do
             ;;
         --secret-data )
             shift;
-            # Handle --configmap-data parameter, which could be key or key=value pairs
+            # Handle --secret-data parameter, which could be key or key=value pairs
             IFS=',' read -ra secret_items <<< "$1"
             for item in "${secret_items[@]}"; do
                 if [[ "$item" == *"="* ]]; then
@@ -107,67 +111,108 @@ if [ -z "$_opt_memory_limit" ]; then
 fi
 ################ End Setting Defaults ################
 ################# Validation ################
+# Check for required parameters
 if [ -z "$_opt_env" ]; then
-    echo "--env is required"
+    echo "Error: --env is required"
     exit 1
 fi
+
 if [ -z "$_opt_app_name" ]; then
-    echo "--app-name is required"
+    echo "Error: --app-name is required"
     exit 1
 fi
+
 if [ -z "$_opt_image" ]; then
-    echo "--image is required"
+    echo "Error: --image is required"
     exit 1
 fi
+
 if [ -z "$_opt_cpu" ]; then
-    echo "--cpu is required"
+    echo "Error: --cpu is required"
     exit 1
 fi
+
 if [ -z "$_opt_memory" ]; then
-    echo "--memory is required"
+    echo "Error: --memory is required"
     exit 1
 fi
+
 if [ -z "$_opt_replicas" ]; then
-    echo "--replicas is required"
+    echo "Error: --replicas is required"
     exit 1
 fi
-if ! [[ "$_opt_replicas" =~ ^[0-9]+$ ]]; then
-    echo "--replicas must be a positive integer"
+
+# Validate replicas as a positive integer
+if ! [[ "$_opt_replicas" =~ ^[0-9]+$ ]] || [ "$_opt_replicas" -le 0 ]; then
+    echo "Error: --replicas must be a positive integer"
     exit 1
 fi
+
 if [ -z "$_opt_max_replicas" ]; then
-    echo "--max-replicas is required"
+    echo "Error: --max-replicas is required"
     exit 1
 fi
-if ! [[ "$_opt_max_replicas" =~ ^[0-9]+$ ]]; then
-    echo "--max-replicas must be a positive integer"
+
+# Validate max-replicas as a positive integer
+if ! [[ "$_opt_max_replicas" =~ ^[0-9]+$ ]] || [ "$_opt_max_replicas" -le 0 ]; then
+    echo "Error: --max-replicas must be a positive integer"
     exit 1
 fi
+
+################# CPU Validation ################
+validate_cpu() {
+    local cpu_value=$1
+    # Allow values like "100m", "1", "2.5", "500m" but disallow invalid formats
+    if ! [[ "$cpu_value" =~ ^([0-9]+(\.[0-9]+)?m|[0-9]+(\.[0-9]+)?)$ ]]; then
+        echo "Error: Invalid CPU value '$cpu_value'. Valid formats are '100m', '1', '2.5', '500m', etc."
+        exit 1
+    fi
+}       
+validate_cpu "$_opt_cpu"
+validate_cpu "$_opt_cpu_limit"
+
+################# Memory Validation ################
+validate_memory() {
+    local memory_value=$1
+    if ! [[ "$memory_value" =~ ^[0-9]+(Mi|Gi|Ki|M|G|K)?$ ]]; then
+        echo "Error: Invalid memory value for $memory_value. Must be in valid units like 512Mi, 1Gi, 1G, etc."
+        exit 1
+    fi
+}
+validate_memory "$_opt_memory"
+validate_memory "$_opt_memory_limit"
+
+# Validate port ranges if any ports are provided
 if [ -n "$_opt_ports" ]; then
     IFS=',' read -ra port_array <<< "$_opt_ports"
     for port in "${port_array[@]}"; do
         if ! [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]]; then
-            echo "Invalid port: $port. Ports must be integers between 1 and 65535."
+            echo "Error: Invalid port: $port. Ports must be integers between 1 and 65535."
             exit 1
         fi
     done
+fi
+
+# Validate the output directory path
+if [ ! -d "$_opt_output" ]; then
+    echo "Error: Output directory '$_opt_output' does not exist."
+    echo "Creating output directory."
+    mkdir -p "$_opt_output"
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to create output directory."
+        exit 1
+    fi
+fi
+
+# Ensure that the environment name is alphanumeric and possibly with underscores/dashes
+if ! [[ "$_opt_env" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: --env must be alphanumeric, and can contain underscores or dashes."
+    exit 1
 fi
 ################## End Validation ################
 
 echo "Environment: $_opt_env"
 echo "Application: $_opt_app_name"
-echo "Cpu: $_opt_cpu"
-echo "Memory: $_opt_memory"
-echo "Replicas: $_opt_replicas"
-echo "Max Replicas: $_opt_max_replicas"
-echo "Image: $_opt_image"
-echo "Ports: $_opt_ports"
-echo "Output: $_opt_output"
-echo "Generate Deployment: $_opt_gen_deployment"
-echo "Generate Configmap: $_opt_gen_configmap"
-echo "Generate Service: $_opt_gen_service"
-
-mkdir -p $_opt_output
 
 generate_deployment() {
     # if ports is not empty string then build ports string for deployment
