@@ -302,22 +302,20 @@ generate_deployment() {
     else
         _deployment_ports=""
     fi
-    # Check if configmap.yaml exists and add the environment variables if it does
-    _configmap_env_vars=""
-    if [ "$_gen_configmap" == true ]; then
-        _configmap_env_vars="
-        envFrom:
-        - configMapRef:
-            name: $_opt_env-$_opt_app_name"
-    fi
+    _env_from=""
+    if [ "$_gen_configmap" == true ] || [ "$_gen_secrets" == true ]; then
+        _env_from="envFrom:"
+        if [ "$_gen_configmap" == true ]; then
+            _env_from+="
+  - configMapRef:
+      name: $_opt_env-$_opt_app_name"
+        fi
 
-    # Check if secrets.yaml exists and add the environment variables if it does
-    _secret_env_vars=""
-    if [ "$_gen_secrets" == true ]; then
-        _secret_env_vars="
-        envFrom:
-        - secretRef:
-            name: $_opt_env-$_opt_app_name"
+        if [ "$_gen_secrets" == true ]; then
+            _env_from+="
+  - secretRef:
+      name: $_opt_env-$_opt_app_name"
+        fi
     fi
 
     # Lifecycle hooks setup
@@ -397,8 +395,7 @@ spec:
             cpu: "$_opt_cpu_limit"
             memory: "$_opt_memory_limit"
         $(if [ -n "$_deployment_ports" ]; then echo "$_deployment_ports"; fi)
-        $(if [ -n "$_configmap_env_vars" ]; then echo "$_configmap_env_vars"; fi)
-        $(if [ -n "$_secret_env_vars" ]; then echo "$_secret_env_vars"; fi)
+$(if [ -n "$_env_from" ]; then echo "$_env_from"| awk '{print "        " $0}'; fi)
 $(if [ -n "$_lifecycle_policy" ]; then echo "$_lifecycle_policy" | awk '{print "        " $0}'; fi)
 EOF
 }
