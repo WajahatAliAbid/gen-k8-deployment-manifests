@@ -26,6 +26,8 @@ if [ "$1" == "--help" ]; then
     echo "  --generate-service              Generate service manifest"
     echo "  --hpa-utilization-threshold     CPU and memory utilization target for HPA (default: 70)"
     echo "  --termination-grace-period      Grace period for pod termination (default: none)"
+    echo "  --post-start-lifecycle-hook     Lifecycle hook to run after the container starts (default: none)"
+    echo "  --pre-stop-lifecycle-hook       Lifecycle hook to run before the container stops (default: none)"
     echo "  --skip-empty                    Skip empty ConfigMap/Secret entries (default: false)"
     echo "  --out                           Output directory (default: ./dist)"
     echo "  --verbose                       Verbose mode (default: false)"
@@ -46,6 +48,8 @@ _opt_service_type="ClusterIP"
 _opt_hpa_utilization_threshold=70
 _opt_termination_grace_period=""
 _opt_image_pull_policy="IfNotPresent"
+_opt_post_start_lifecycle_hook=""
+_opt_pre_stop_lifecycle_hook=""
 declare -A configmap_data
 declare -A secret_data
 while [ "$1" != "" ]; do
@@ -110,6 +114,10 @@ while [ "$1" != "" ]; do
             shift; _opt_termination_grace_period=$1;;
         --image-pull-policy )
             shift; _opt_image_pull_policy=$1;;
+        --post-start-lifecycle-hook )
+            shift; _opt_post_start_lifecycle_hook=$1;;
+        --pre-stop-lifecycle-hook )
+            shift; _opt_pre_stop_lifecycle_hook=$1;;
         --skip-empty )
             _opt_skip_empty=true;;
         --out )
@@ -311,6 +319,49 @@ generate_deployment() {
         - secretRef:
             name: $_opt_env-$_opt_app_name"
     fi
+
+    # Lifecycle hooks setup
+    if [ -n "$_opt_pre_stop_lifecycle_hook" ]; then
+        if [ -f "$_opt_pre_stop_lifecycle_hook" ]; then
+            _pre_stop_lifecycle_hook="$(cat "$_opt_pre_stop_lifecycle_hook")"
+        else
+            _pre_stop_lifecycle_hook="$_opt_pre_stop_lifecycle_hook"
+        fi
+    fi
+
+    if [ -n "$_opt_post_start_lifecycle_hook" ]; then
+        if [ -f "$_opt_post_start_lifecycle_hook" ]; then
+            _post_start_lifecycle_hook="$(cat "$_opt_post_start_lifecycle_hook")"
+        else
+            _post_start_lifecycle_hook="$_opt_post_start_lifecycle_hook"
+        fi
+    fi
+
+    if [ -n "$_pre_stop_lifecycle_hook" ] || [ -n "$_post_start_lifecycle_hook" ]; then
+        _lifecycle_policy="lifecycle:"
+        if [ -n "$_pre_stop_lifecycle_hook" ]; then
+            _lifecycle_policy+="
+  preStop:
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        - |
+$(echo "$_pre_stop_lifecycle_hook" | awk '{print "          " $0}')
+"
+        fi
+        if [ -n "$_post_start_lifecycle_hook" ]; then
+            _lifecycle_policy+="
+  postStart:
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        - |
+$(echo "$_post_start_lifecycle_hook" | awk '{print "          " $0}')
+"
+        fi
+    fi
     echo "Generating Deployment"
     cat <<EOF >$_opt_output/deployment.yaml
 apiVersion: apps/v1
@@ -348,6 +399,7 @@ spec:
         $(if [ -n "$_deployment_ports" ]; then echo "$_deployment_ports"; fi)
         $(if [ -n "$_configmap_env_vars" ]; then echo "$_configmap_env_vars"; fi)
         $(if [ -n "$_secret_env_vars" ]; then echo "$_secret_env_vars"; fi)
+$(if [ -n "$_lifecycle_policy" ]; then echo "$_lifecycle_policy" | awk '{print "        " $0}'; fi)
 EOF
 }
 
