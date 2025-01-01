@@ -44,7 +44,6 @@ _opt_gen_service=false
 _opt_skip_empty=false
 _opt_replicas=1
 _opt_max_replicas=1
-_opt_ports=""
 _opt_service_type="ClusterIP"
 _opt_hpa_utilization_threshold=70
 _opt_termination_grace_period=""
@@ -54,6 +53,42 @@ _opt_pre_stop_lifecycle_hook=""
 _opt_spread_pods_evenly=false
 declare -A configmap_data
 declare -A secret_data
+declare -A _opt_ports
+declare -A _opt_service_ports
+
+_get_ports_array() {
+    local _ports_string="$1"  # Input string of ports
+    declare -n _result_array="$2"  # Name reference to the output array
+    declare -A _data_array
+    
+    # If ports string contains a comma, split it into an array
+    if [[ "$_ports_string" == *","* ]]; then
+        IFS=',' read -ra _ports_data <<< "$_ports_string"
+        for item in "${_ports_data[@]}"; do
+            if [[ "$item" == *"="* ]]; then
+                IFS='=' read -r key value <<< "$item"
+                _data_array["$key"]="$value"
+            else
+                echo "Error: Port '$item' must be in name=port format when multiple ports are provided."
+                # Optionally exit here, but can be commented for testing
+                # exit 1
+            fi
+        done
+    else
+        if [[ "$_ports_string" == *"="* ]]; then
+            IFS='=' read -r key value <<< "$_ports_string"
+            _data_array["$key"]="$value"
+        else
+            _data_array["main"]="$_ports_string"
+        fi
+    fi
+
+    # Pass the data back via reference
+    for key in "${!_data_array[@]}"; do
+        _result_array["$key"]="${_data_array[$key]}"
+    done
+}
+
 while [ "$1" != "" ]; do
     case $1 in
         --env )
@@ -75,9 +110,11 @@ while [ "$1" != "" ]; do
         --max-replicas )
             shift; _opt_max_replicas=$1;;
         --ports )
-            shift; _opt_ports=$1;;
+            shift;
+            _get_ports_array $1 _opt_ports;;
         --service-ports )
-            shift; _opt_service_ports=$1;;
+            shift; 
+            _get_ports_array $1 _opt_service_ports;;
         --configmap-data )
             shift;
             # Handle --configmap-data parameter, which could be key or key=value pairs
@@ -134,6 +171,8 @@ while [ "$1" != "" ]; do
     esac
     shift
 done
+
+
 ################# Setting Defaults ################
 if [ -z "$_opt_cpu_limit" ]; then
     _opt_cpu_limit="$_opt_cpu"
@@ -141,9 +180,14 @@ fi
 if [ -z "$_opt_memory_limit" ]; then
     _opt_memory_limit="$_opt_memory"
 fi
-if [ -z "$_opt_service_ports" ]; then
-    _opt_service_ports="$_opt_ports"
+
+
+if [ ${#_opt_service_ports[@]} -eq 0 ]; then
+    for key in "${!_opt_ports[@]}"; do
+        _opt_service_ports["$key"]="${_opt_ports[$key]}"
+    done
 fi
+
 ################ End Setting Defaults ################
 ################# Validation ################
 # Check for required parameters
@@ -230,11 +274,11 @@ validate_memory "$_opt_memory"
 validate_memory "$_opt_memory_limit"
 
 # Validate port ranges if any ports are provided
-if [ -n "$_opt_ports" ]; then
-    IFS=',' read -ra port_array <<< "$_opt_ports"
-    for port in "${port_array[@]}"; do
-        if ! [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]]; then
-            echo "Error: Invalid port: $port. Ports must be integers between 1 and 65535."
+if [ ${#_opt_ports[@]} -ne 0 ]; then
+    for key in "${!_opt_ports[@]}"; do
+        _port="${_opt_ports[$key]}"
+        if ! [[ "$_port" =~ ^[0-9]+$ && "$_port" -ge 1 && "$_port" -le 65535 ]]; then
+            echo "Error: Invalid port: $_port. Ports must be integers between 1 and 65535."
             exit 1
         fi
     done
@@ -266,14 +310,34 @@ if ! [[ " ${_valid_Service_types[@]} " =~ " $_opt_service_type " ]]; then
 fi
 
 # Validate service-ports to ensure they are part of the --ports list
-IFS=',' read -ra service_ports_array <<< "$_opt_service_ports"
-IFS=',' read -ra all_ports_array <<< "$_opt_ports"
-for port in "${service_ports_array[@]}"; do
-    if ! [[ " ${all_ports_array[@]} " =~ " $port " ]]; then
-        echo "Error: Port $port in --service-ports is not valid. It must be part of the --ports list."
-        exit 1
-    fi
-done
+
+# for key in "${!_opt_service_ports[@]}"; do
+#     echo $key
+#     # _port="${_opt_service_ports[$key]}"
+#     # echo $_port
+# done
+if [ ${#_opt_service_ports[@]} -ne 0 ]; then
+    all_ports_array=("${_opt_ports[@]}")
+    for key in "${!_opt_service_ports[@]}"; do
+        _port="${_opt_service_ports[$key]}"
+        
+        if ! [[ " ${all_ports_array[@]} " =~ " $_port " ]]; then
+            echo "Error: Port $_port in --service-ports is not valid. It must be part of the --ports list."
+            exit 1
+        fi
+
+        # check if key exists in _opt_ports
+        if [ -z "${_opt_ports[$key]}" ]; then
+            echo "Error: Port $_port in --service-ports is not valid. Port with key $key does not exist in --ports list."
+            exit 1
+        fi
+
+        if [ "${_opt_service_ports[$key]}" != "${_opt_ports[$key]}" ]; then
+            echo "Error: Port $_port in --service-ports does not match the corresponding port with key $key in --ports."
+            exit 1
+        fi
+    done
+fi
 
 # Validate HPA utilization threshold (1-100)
 if [ -n "$_opt_hpa_utilization_threshold" ]; then
@@ -295,13 +359,14 @@ echo "Application: $_opt_app_name"
 
 generate_deployment() {
     # if ports is not empty string then build ports string for deployment
-    if [ -n "$_opt_ports" ]; then
+    if [ ${#_opt_ports[@]} -gt 0 ]; then
         _deployment_ports="
         ports:"
-        IFS=',' read -ra port_array <<< "$_opt_ports"
-        for port in "${port_array[@]}"; do
+        for key in "${!_opt_ports[@]}"; do
+            _port="${_opt_ports[$key]}"
             _deployment_ports+="
-          - containerPort: $port"
+          - name: $key
+            containerPort: $_port"
         done
     else
         _deployment_ports=""
@@ -519,12 +584,17 @@ EOF
 
 generate_service() {
     echo "Generating Service"
-    for port in "${service_ports_array[@]}"; do
-        __service_ports+="
-    - protocol: TCP
-      port: $port
-      targetPort: $port"
-    done
+    if [ ${#_opt_service_ports[@]} -ne 0 ]; then
+        __service_ports=""
+        for key in "${!_opt_service_ports[@]}"; do
+            _port="${_opt_service_ports[$key]}"
+            __service_ports+="
+    - name: $key
+      port: $_port
+      targetPort: $_port
+      protocol: TCP"
+        done
+    fi
     cat <<EOF >$_opt_output/service.yaml
 apiVersion: v1
 kind: Service
