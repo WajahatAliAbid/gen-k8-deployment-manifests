@@ -338,7 +338,6 @@ if [ ${#_opt_service_ports[@]} -ne 0 ]; then
         fi
     done
 fi
-exit
 
 # Validate HPA utilization threshold (1-100)
 if [ -n "$_opt_hpa_utilization_threshold" ]; then
@@ -360,13 +359,14 @@ echo "Application: $_opt_app_name"
 
 generate_deployment() {
     # if ports is not empty string then build ports string for deployment
-    if [ -n "$_opt_ports" ]; then
+    if [ ${#_opt_ports[@]} -gt 0 ]; then
         _deployment_ports="
         ports:"
-        IFS=',' read -ra port_array <<< "$_opt_ports"
-        for port in "${port_array[@]}"; do
+        for key in "${!_opt_ports[@]}"; do
+            _port="${_opt_ports[$key]}"
             _deployment_ports+="
-          - containerPort: $port"
+          - name: $key
+            containerPort: $_port"
         done
     else
         _deployment_ports=""
@@ -584,12 +584,17 @@ EOF
 
 generate_service() {
     echo "Generating Service"
-    for port in "${service_ports_array[@]}"; do
-        __service_ports+="
-    - protocol: TCP
-      port: $port
-      targetPort: $port"
-    done
+    if [ ${#_opt_service_ports[@]} -ne 0 ]; then
+        __service_ports=""
+        for key in "${!_opt_service_ports[@]}"; do
+            _port="${_opt_service_ports[$key]}"
+            __service_ports+="
+    - name: $key
+      port: $_port
+      targetPort: $_port
+      protocol: TCP"
+        done
+    fi
     cat <<EOF >$_opt_output/service.yaml
 apiVersion: v1
 kind: Service
