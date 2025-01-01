@@ -182,10 +182,6 @@ if [ -z "$_opt_memory_limit" ]; then
 fi
 
 
-
-
-exit
-
 if [ ${#_opt_service_ports[@]} -eq 0 ]; then
     for key in "${!_opt_ports[@]}"; do
         _opt_service_ports["$key"]="${_opt_ports[$key]}"
@@ -333,6 +329,11 @@ if [ ${#_opt_service_ports[@]} -ne 0 ]; then
         # check if key exists in _opt_ports
         if [ -z "${_opt_ports[$key]}" ]; then
             echo "Error: Port $_port in --service-ports is not valid. Port with key $key does not exist in --ports list."
+            exit 1
+        fi
+
+        if [ "${_opt_service_ports[$key]}" != "${_opt_ports[$key]}" ]; then
+            echo "Error: Port $_port in --service-ports does not match the corresponding port with key $key in --ports."
             exit 1
         fi
     done
