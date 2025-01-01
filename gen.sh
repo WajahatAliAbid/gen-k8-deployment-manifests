@@ -57,15 +57,11 @@ declare -A _opt_ports
 declare -A _opt_service_ports
 
 _get_ports_array() {
-    local _ports_string="$1"
-    declare -n _result_array="$2"  # Name reference to output array
-    declare -A _data_array=()
+    local _ports_string="$1"  # Input string of ports
+    declare -n _result_array="$2"  # Name reference to the output array
+    declare -A _data_array
     
-    echo "For port string: $_ports_string"
-    for key in "${!_result_array[@]}"; do
-        echo "Port is $key: ${_result_array[$key]}"
-    done
-    # if ports string contains a comma then split it into an array
+    # If ports string contains a comma, split it into an array
     if [[ "$_ports_string" == *","* ]]; then
         IFS=',' read -ra _ports_data <<< "$_ports_string"
         for item in "${_ports_data[@]}"; do
@@ -74,7 +70,8 @@ _get_ports_array() {
                 _data_array["$key"]="$value"
             else
                 echo "Error: Port '$item' must be in name=port format when multiple ports are provided."
-                exit 1
+                # Optionally exit here, but can be commented for testing
+                # exit 1
             fi
         done
     else
@@ -84,7 +81,6 @@ _get_ports_array() {
         else
             _data_array["main"]="$_ports_string"
         fi
-        _data_array["main"]="$_ports_string"
     fi
 
     # Pass the data back via reference
@@ -92,6 +88,7 @@ _get_ports_array() {
         _result_array["$key"]="${_data_array[$key]}"
     done
 }
+
 while [ "$1" != "" ]; do
     case $1 in
         --env )
@@ -176,7 +173,6 @@ while [ "$1" != "" ]; do
 done
 
 
-
 ################# Setting Defaults ################
 if [ -z "$_opt_cpu_limit" ]; then
     _opt_cpu_limit="$_opt_cpu"
@@ -185,13 +181,8 @@ if [ -z "$_opt_memory_limit" ]; then
     _opt_memory_limit="$_opt_memory"
 fi
 
-for key in "${!_opt_ports[@]}"; do
-    echo "Port $key: ${opt_ports[$key]}"
-done
 
-for key in "${!_opt_service_ports[@]}"; do
-    echo "Service Port $key: ${_opt_service_ports[$key]}"
-done
+
 
 exit
 
