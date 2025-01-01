@@ -28,6 +28,7 @@ if [ "$1" == "--help" ]; then
     echo "  --termination-grace-period      Grace period for pod termination (default: none)"
     echo "  --post-start-lifecycle-hook     Lifecycle hook to run after the container starts (default: none)"
     echo "  --pre-stop-lifecycle-hook       Lifecycle hook to run before the container stops (default: none)"
+    echo "  --spread-pods-evenly            Spreds pods evenly across nodes (default: false)"
     echo "  --skip-empty                    Skip empty ConfigMap/Secret entries (default: false)"
     echo "  --out                           Output directory (default: ./dist)"
     echo "  --verbose                       Verbose mode (default: false)"
@@ -50,6 +51,7 @@ _opt_termination_grace_period=""
 _opt_image_pull_policy="IfNotPresent"
 _opt_post_start_lifecycle_hook=""
 _opt_pre_stop_lifecycle_hook=""
+_opt_spread_pods_evenly=false
 declare -A configmap_data
 declare -A secret_data
 while [ "$1" != "" ]; do
@@ -108,6 +110,8 @@ while [ "$1" != "" ]; do
             _opt_gen_deployment=true;;
         --generate-service )
             _opt_gen_service=true;;
+        --spread-pods-evenly )
+            _opt_spread_pods_evenly=true;;
         --hpa-utilization-threshold )
             shift; _opt_hpa_utilization_threshold=$1;;
         --termination-grace-period )
@@ -360,6 +364,26 @@ $(echo "$_post_start_lifecycle_hook" | awk '{print "          " $0}')
 "
         fi
     fi
+    _pod_anti_affinity=""
+    if [ "$_opt_spread_pods_evenly" == true ]; then
+        _pod_anti_affinity="
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - $_opt_app_name
+          - key: env
+            operator: In
+            values:
+            - $_opt_env
+        topologyKey: kubernetes.io/hostname"
+    fi
     echo "Generating Deployment"
     cat <<EOF >$_opt_output/deployment.yaml
 apiVersion: apps/v1
@@ -397,6 +421,7 @@ spec:
         $(if [ -n "$_deployment_ports" ]; then echo "$_deployment_ports"; fi)
 $(if [ -n "$_env_from" ]; then echo "$_env_from"| awk '{print "        " $0}'; fi)
 $(if [ -n "$_lifecycle_policy" ]; then echo "$_lifecycle_policy" | awk '{print "        " $0}'; fi)
+$(if [ -n "$_pod_anti_affinity" ]; then echo "$_pod_anti_affinity" | awk '{print "      " $0}'; fi)
 EOF
 }
 
