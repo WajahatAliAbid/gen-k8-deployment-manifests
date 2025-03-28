@@ -140,6 +140,11 @@ while [ "$1" != "" ]; do
             fi
             _opt_configmap_template_file="$1"
             _opt_configmap_map_path="$2"
+            # Check if _opt_configmap_template_file exists
+            if [ ! -f "$_opt_configmap_template_file" ]; then
+                echo "Error: Configmap template file $_opt_configmap_template_file does not exist" >&2
+                exit 1
+            fi
             shift
             ;;
         --secret-data )
@@ -516,6 +521,9 @@ EOF
 }
 
 generate_configmap() {
+    if [ -n "$_opt_configmap_template_file" ]; then
+        return
+    fi
     echo "Generating Configmap"
     __env_kvp=""
     _underscore_env_name="${_opt_env//-/_}"
@@ -561,9 +569,55 @@ EOF
     _gen_configmap=true
 }
 
-# generate_configmap_template() {
+generate_configmap_template() {
+    if [ -z "$_opt_configmap_template_file" ]; then
+        return
+    fi
+    echo "Generating Configmap from template"
+    cp $_opt_configmap_template_file ./config.tmp.json
 
-# }
+    _underscore_env_name="${_opt_env//-/_}"
+    for key in "${!configmap_data[@]}"; do
+        __value=""
+        __default_value="${configmap_data[$key]}"
+        __env_key="${_underscore_env_name^^}_${key}"
+        __fallback_key="${key}"
+        if [[ -v "$__env_key" ]]; then
+            __value="${!__env_key}"
+        elif [[ -v "$__fallback_key" ]]; then
+            __value="${!__fallback_key}"
+        fi
+        # If __value is empty, use the default value
+        if [ -z "$__value" ]; then
+            __value="${__default_value}"
+        fi
+        if [ -z "$__value" ]; then
+            if [ "$_opt_skip_empty" = true ]; then
+                # Value is not defined, skip
+                continue
+            fi
+        fi
+        sed -i "s#<$key>#$__value#g" ./config.tmp.json
+    done
+    json_body=$(cat ./config.tmp.json)
+
+    rm ./config.tmp.json
+    cat <<EOF >$_opt_output/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: $_opt_env-$_opt_app_name
+  namespace: $_opt_env
+  labels:
+    app: $_opt_app_name
+    env: $_opt_env
+data:
+  $_opt_configmap_map_path : |
+$(echo "$json_body" | sed 's/^/        /')
+EOF
+    _gen_configmap=true
+
+}
 
 generate_secrets() {
     __env_kvp=""
@@ -679,7 +733,7 @@ EOF
 _gen_configmap=false
 _gen_secrets=false
 generate_configmap
-# generate_configmap_template
+generate_configmap_template
 generate_secrets
 
 if [ "$_opt_gen_deployment" = true ]; then
