@@ -17,6 +17,7 @@ if [ "$1" == "--help" ]; then
     echo "  --ports                         Comma-separated list of container ports"
     echo "  --configmap-data                Comma-separated list of key=value pairs for ConfigMap"
     echo "                                  (e.g., --configmap-data key1=value1,key2=value2)"
+    echo "  --configmap-template            ConfigMap template file alongside path to map config in the script"
     echo "  --secret-data                   Comma-separated list of key=value pairs for Secret"
     echo "                                  (e.g., --secret-data secret1=value1,secret2=value2)"
     echo "  --service-type                  Service type (default: ClusterIP)"
@@ -55,6 +56,9 @@ declare -A configmap_data
 declare -A secret_data
 declare -A _opt_ports
 declare -A _opt_service_ports
+
+_opt_configmap_template_file=""
+_opt_configmap_map_path=""
 
 _get_ports_array() {
     local _ports_string="$1"  # Input string of ports
@@ -128,6 +132,16 @@ while [ "$1" != "" ]; do
                 fi
             done
             ;;
+        --configmap-template )
+            shift
+            if [[ -z "$1" || -z "$2" ]]; then
+                echo "Error: Missing arguments for --configmap-template" >&2
+                exit 1
+            fi
+            _opt_configmap_template_file="$1"
+            _opt_configmap_map_path="$2"
+            shift
+            ;;
         --secret-data )
             shift;
             # Handle --secret-data parameter, which could be key or key=value pairs
@@ -171,7 +185,6 @@ while [ "$1" != "" ]; do
     esac
     shift
 done
-
 
 ################# Setting Defaults ################
 if [ -z "$_opt_cpu_limit" ]; then
@@ -372,12 +385,15 @@ generate_deployment() {
         _deployment_ports=""
     fi
     _env_from=""
-    if [ "$_gen_configmap" == true ] || [ "$_gen_secrets" == true ]; then
+    if [[ ( "$_gen_configmap" == true && -n "$_opt_configmap_template_file" ) || "$_gen_secrets" == true ]]; then
         _env_from="envFrom:"
-        if [ "$_gen_configmap" == true ]; then
-            _env_from+="
+
+        if [  -z "$_opt_configmap_template_file" ]; then
+            if [ "$_gen_configmap" == true ]; then
+                _env_from+="
   - configMapRef:
       name: $_opt_env-$_opt_app_name"
+            fi
         fi
 
         if [ "$_gen_secrets" == true ]; then
@@ -386,7 +402,15 @@ generate_deployment() {
       name: $_opt_env-$_opt_app_name"
         fi
     fi
-
+    _volumes=""
+    if [ "$_gen_configmap" == true ]; then
+        if [ -n "$_opt_configmap_template_file" ]; then
+            _volumes="volumes:
+  - name: config-volume
+    configMap:
+      name: $_opt_env-$_opt_app_name"
+        fi
+    fi
     # Lifecycle hooks setup
     if [ -n "$_opt_pre_stop_lifecycle_hook" ]; then
         if [ -f "$_opt_pre_stop_lifecycle_hook" ]; then
@@ -485,6 +509,7 @@ spec:
             memory: "$_opt_memory_limit"
         $(if [ -n "$_deployment_ports" ]; then echo "$_deployment_ports"; fi)
 $(if [ -n "$_env_from" ]; then echo "$_env_from"| awk '{print "        " $0}'; fi)
+$(if [ -n "$_volumes" ]; then echo "$_volumes" | awk '{print "        " $0}'; fi)
 $(if [ -n "$_lifecycle_policy" ]; then echo "$_lifecycle_policy" | awk '{print "        " $0}'; fi)
 $(if [ -n "$_pod_anti_affinity" ]; then echo "$_pod_anti_affinity" | awk '{print "      " $0}'; fi)
 EOF
@@ -535,6 +560,10 @@ $__env_kvp
 EOF
     _gen_configmap=true
 }
+
+# generate_configmap_template() {
+
+# }
 
 generate_secrets() {
     __env_kvp=""
@@ -650,6 +679,7 @@ EOF
 _gen_configmap=false
 _gen_secrets=false
 generate_configmap
+# generate_configmap_template
 generate_secrets
 
 if [ "$_opt_gen_deployment" = true ]; then
