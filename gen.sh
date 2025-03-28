@@ -513,7 +513,7 @@ spec:
             cpu: "$_opt_cpu_limit"
             memory: "$_opt_memory_limit"
         $(if [ -n "$_deployment_ports" ]; then echo "$_deployment_ports"; fi)
-$(if [ -n "$_env_from" ]; then echo "$_env_from"| awk '{print "        " $0}'; fi)
+$(if [ -n "$_env_from" ] && [ "$_env_from" != "envFrom:" ]; then echo "$_env_from"| awk '{print "        " $0}'; fi)
 $(if [ -n "$_volumes" ]; then echo "$_volumes" | awk '{print "        " $0}'; fi)
 $(if [ -n "$_lifecycle_policy" ]; then echo "$_lifecycle_policy" | awk '{print "        " $0}'; fi)
 $(if [ -n "$_pod_anti_affinity" ]; then echo "$_pod_anti_affinity" | awk '{print "      " $0}'; fi)
