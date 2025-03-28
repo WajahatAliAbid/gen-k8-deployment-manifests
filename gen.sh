@@ -613,7 +613,7 @@ metadata:
     env: $_opt_env
 data:
   $_opt_configmap_map_path : |
-$(echo "$json_body" | sed 's/^/        /')
+$(echo "$json_body" | sed 's/^/    /')
 EOF
     _gen_configmap=true
 
