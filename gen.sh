@@ -18,6 +18,7 @@ if [ "$1" == "--help" ]; then
     echo "  --configmap-data                Comma-separated list of key=value pairs for ConfigMap"
     echo "                                  (e.g., --configmap-data key1=value1,key2=value2)"
     echo "  --configmap-template            ConfigMap template file alongside path to map config in the script"
+    echo "  --configmap-volume-path         Path to ConfigMap template file for mounting as volume"
     echo "  --secret-data                   Comma-separated list of key=value pairs for Secret"
     echo "                                  (e.g., --secret-data secret1=value1,secret2=value2)"
     echo "  --service-type                  Service type (default: ClusterIP)"
@@ -59,6 +60,7 @@ declare -A _opt_service_ports
 
 _opt_configmap_template_file=""
 _opt_configmap_map_path=""
+_opt_configmap_volume_path=""
 
 _get_ports_array() {
     local _ports_string="$1"  # Input string of ports
@@ -147,6 +149,8 @@ while [ "$1" != "" ]; do
             fi
             shift
             ;;
+        --configmap-volume-path )
+            shift; _opt_configmap_volume_path=$1;;
         --secret-data )
             shift;
             # Handle --secret-data parameter, which could be key or key=value pairs
@@ -304,7 +308,7 @@ fi
 
 # Validate the output directory path
 if [ ! -d "$_opt_output" ]; then
-    echo "Error: Output directory '$_opt_output' does not exist."
+    # echo "WArning: Output directory '$_opt_output' does not exist."
     echo "Creating output directory."
     mkdir -p "$_opt_output"
     if [ $? -ne 0 ]; then
@@ -408,12 +412,19 @@ generate_deployment() {
         fi
     fi
     _volumes=""
+    _volume_mounts=""
     if [ "$_gen_configmap" == true ]; then
         if [ -n "$_opt_configmap_template_file" ]; then
             _volumes="volumes:
   - name: config-volume
     configMap:
       name: $_opt_env-$_opt_app_name"
+            if [ -n "$_opt_configmap_volume_path" ]; then
+                _volume_mounts="volumeMounts:
+  - name: config-volume
+    mountPath: $_opt_configmap_volume_path/$_opt_configmap_map_path
+    subPath: $_opt_configmap_map_path"
+            fi
         fi
     fi
     # Lifecycle hooks setup
@@ -514,9 +525,10 @@ spec:
             memory: "$_opt_memory_limit"
         $(if [ -n "$_deployment_ports" ]; then echo "$_deployment_ports"; fi)
 $(if [ -n "$_env_from" ] && [ "$_env_from" != "envFrom:" ]; then echo "$_env_from"| awk '{print "        " $0}'; fi)
-$(if [ -n "$_volumes" ]; then echo "$_volumes" | awk '{print "        " $0}'; fi)
+$(if [ -n "$_volume_mounts" ] && [ "$_volume_mounts" != "envFrom:" ]; then echo "$_volume_mounts"| awk '{print "        " $0}'; fi)
 $(if [ -n "$_lifecycle_policy" ]; then echo "$_lifecycle_policy" | awk '{print "        " $0}'; fi)
 $(if [ -n "$_pod_anti_affinity" ]; then echo "$_pod_anti_affinity" | awk '{print "      " $0}'; fi)
+$(if [ -n "$_volumes" ]; then echo "$_volumes" | awk '{print "      " $0}'; fi)
 EOF
 }
 
