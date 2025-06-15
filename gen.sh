@@ -609,7 +609,8 @@ generate_configmap_template() {
                 continue
             fi
         fi
-        sed -i "s#<$key>#$__value#g" ./config.tmp.json
+        
+        sed -i "s#<${key,,}>#$__value#g" ./config.tmp.json
     done
     json_body=$(cat ./config.tmp.json)
 
@@ -654,7 +655,10 @@ generate_secrets() {
                 continue
             fi
         fi
-        __env_kvp="${__env_kvp}  $key: \"$__value\"
+        
+        # Base64 encode the value (no newline)
+        __b64_value=$(printf "%s" "$__value" | base64 | tr -d '\n')
+        __env_kvp="${__env_kvp}  $key: \"$__b64_value\"
 "
     done
     if [ ! -n "$__env_kvp" ]; then
