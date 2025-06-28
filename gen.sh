@@ -33,9 +33,8 @@ if [ "$1" == "--help" ]; then
     echo "  --spread-pods-evenly            Spreds pods evenly across nodes (default: false)"
     echo "  --skip-empty                    Skip empty ConfigMap/Secret entries (default: false)"
     echo "  --readiness-endpoint            Endpoint to check readiness for (default: none)"
-    echo "  --readiness-port                Port to check readiness for (default: 80)"
+    echo "  --health-port                   Port to check health checks on (default: 80)"
     echo "  --liveliness-endpoint           Endpoint to check liveness for (default: none)"
-    echo "  --liveliness-port               Port to check liveness for (default: 80)"
     echo "  --out                           Output directory (default: ./dist)"
     echo "  --verbose                       Verbose mode (default: false)"
     exit 0
@@ -58,9 +57,8 @@ _opt_post_start_lifecycle_hook=""
 _opt_pre_stop_lifecycle_hook=""
 _opt_spread_pods_evenly=false
 _opt_readiness_endpoint=""
-_opt_readiness_port=80
+_opt_health_port=80
 _opt_liveliness_endpoint=""
-_opt_liveliness_port=80
 declare -A configmap_data
 declare -A secret_data
 declare -A _opt_ports
@@ -196,12 +194,10 @@ while [ "$1" != "" ]; do
             shift; _opt_output=$1;;
         --readiness-endpoint )
             shift; _opt_readiness_endpoint=$1;;
-        --readiness-port )
-            shift; _opt_readiness_port=$1;;
+        --health-port )
+            shift; _opt_health_port=$1;;
         --liveliness-endpoint )
             shift; _opt_liveliness_endpoint=$1;;
-        --liveliness-port )
-            shift; _opt_liveliness_port=$1;;
         --verbose )
             set -x;;
         * )
@@ -321,6 +317,15 @@ if [ ${#_opt_ports[@]} -ne 0 ]; then
         fi
     done
 fi
+
+# if _opt_health_port isn't in _opt_ports then error
+if [ -n "$_opt_health_port" ]; then
+    if ! [[ " ${_opt_ports[@]} " =~ " $_opt_health_port " ]]; then
+        echo "Error: --health-port must be part of the --ports list. (currently set to $_opt_health_port)"
+        exit 1
+    fi
+fi
+
 
 # Validate the output directory path
 if [ ! -d "$_opt_output" ]; then
@@ -462,7 +467,7 @@ generate_deployment() {
         _readiness_probe="readinessProbe:
           httpGet:
             path: $_opt_readiness_endpoint
-            port: $_opt_readiness_port
+            port: $_opt_health_port
           initialDelaySeconds: 5
           periodSeconds: 10
           timeoutSeconds: 2
@@ -474,7 +479,7 @@ generate_deployment() {
         _liveliness_probe="livenessProbe:
           httpGet:
             path: $_opt_liveliness_endpoint
-            port: $_opt_liveliness_port
+            port: $_opt_health_port
           initialDelaySeconds: 5
           periodSeconds: 10
           timeoutSeconds: 2
@@ -570,6 +575,7 @@ $(if [ -n "$_lifecycle_policy" ]; then echo "$_lifecycle_policy" | awk '{print "
 $(if [ -n "$_pod_anti_affinity" ]; then echo "$_pod_anti_affinity" | awk '{print "      " $0}'; fi)
 $(if [ -n "$_volumes" ]; then echo "$_volumes" | awk '{print "      " $0}'; fi)
 EOF
+    sed -i '/^[[:space:]]*$/d' $_opt_output/deployment.yaml
 }
 
 generate_configmap() {
@@ -619,6 +625,7 @@ data:
 $__env_kvp
 EOF
     _gen_configmap=true
+    sed -i '/^[[:space:]]*$/d' $_opt_output/configmap.yaml
 }
 
 generate_configmap_template() {
@@ -669,6 +676,7 @@ data:
 $(echo "$json_body" | sed 's/^/    /')
 EOF
     _gen_configmap=true
+    sed -i '/^[[:space:]]*$/d' $_opt_output/configmap.yaml
 
 }
 
@@ -719,6 +727,7 @@ data:
 $__env_kvp
 EOF
     _gen_secrets=true
+    sed -i '/^[[:space:]]*$/d' $_opt_output/secrets.yaml
 }
 
 generate_service() {
@@ -750,6 +759,8 @@ spec:
     env: $_opt_env
   $(if [ -n "$__service_ports" ]; then echo "ports: $__service_ports"; fi)
 EOF
+
+    sed -i '/^[[:space:]]*$/d' $_opt_output/service.yaml
 }
 
 generate_hpa() {
@@ -784,6 +795,8 @@ spec:
         type: Utilization
         averageUtilization: $_opt_hpa_utilization_threshold
 EOF
+
+    sed -i '/^[[:space:]]*$/d' $_opt_output/hpa.yaml
 }
 
 _gen_configmap=false
