@@ -32,6 +32,10 @@ if [ "$1" == "--help" ]; then
     echo "  --pre-stop-lifecycle-hook       Lifecycle hook to run before the container stops (default: none)"
     echo "  --spread-pods-evenly            Spreds pods evenly across nodes (default: false)"
     echo "  --skip-empty                    Skip empty ConfigMap/Secret entries (default: false)"
+    echo "  --readiness-endpoint            Endpoint to check readiness for (default: none)"
+    echo "  --readiness-port                Port to check readiness for (default: 80)"
+    echo "  --liveliness-endpoint           Endpoint to check liveness for (default: none)"
+    echo "  --liveliness-port               Port to check liveness for (default: 80)"
     echo "  --out                           Output directory (default: ./dist)"
     echo "  --verbose                       Verbose mode (default: false)"
     exit 0
@@ -53,6 +57,10 @@ _opt_image_pull_policy="IfNotPresent"
 _opt_post_start_lifecycle_hook=""
 _opt_pre_stop_lifecycle_hook=""
 _opt_spread_pods_evenly=false
+_opt_readiness_endpoint=""
+_opt_readiness_port=80
+_opt_liveliness_endpoint=""
+_opt_liveliness_port=80
 declare -A configmap_data
 declare -A secret_data
 declare -A _opt_ports
@@ -186,6 +194,14 @@ while [ "$1" != "" ]; do
             _opt_skip_empty=true;;
         --out )
             shift; _opt_output=$1;;
+        --readiness-endpoint )
+            shift; _opt_readiness_endpoint=$1;;
+        --readiness-port )
+            shift; _opt_readiness_port=$1;;
+        --liveliness-endpoint )
+            shift; _opt_liveliness_endpoint=$1;;
+        --liveliness-port )
+            shift; _opt_liveliness_port=$1;;
         --verbose )
             set -x;;
         * )
@@ -431,17 +447,39 @@ generate_deployment() {
     if [ -n "$_opt_pre_stop_lifecycle_hook" ]; then
         if [ -f "$_opt_pre_stop_lifecycle_hook" ]; then
             _pre_stop_lifecycle_hook="$(cat "$_opt_pre_stop_lifecycle_hook")"
-        else
-            _pre_stop_lifecycle_hook="$_opt_pre_stop_lifecycle_hook"
         fi
     fi
 
     if [ -n "$_opt_post_start_lifecycle_hook" ]; then
         if [ -f "$_opt_post_start_lifecycle_hook" ]; then
             _post_start_lifecycle_hook="$(cat "$_opt_post_start_lifecycle_hook")"
-        else
-            _post_start_lifecycle_hook="$_opt_post_start_lifecycle_hook"
         fi
+    fi
+    _readiness_probe=""
+    _liveliness_probe=""
+
+    if [ -n "$_opt_readiness_endpoint" ]; then
+        _readiness_probe="readinessProbe:
+          httpGet:
+            path: $_opt_readiness_endpoint
+            port: $_opt_readiness_port
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 2
+          successThreshold: 1
+          failureThreshold: 3"
+    fi
+
+    if [ -n "$_opt_liveliness_endpoint" ]; then
+        _liveliness_probe="livenessProbe:
+          httpGet:
+            path: $_opt_liveliness_endpoint
+            port: $_opt_liveliness_port
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 2
+          successThreshold: 1
+          failureThreshold: 3"
     fi
 
     if [ -n "$_pre_stop_lifecycle_hook" ] || [ -n "$_post_start_lifecycle_hook" ]; then
@@ -524,6 +562,8 @@ spec:
             cpu: "$_opt_cpu_limit"
             memory: "$_opt_memory_limit"
         $(if [ -n "$_deployment_ports" ]; then echo "$_deployment_ports"; fi)
+        $(if [ -n "$_readiness_probe" ]; then echo "$_readiness_probe"; fi)
+        $(if [ -n "$_liveliness_probe" ]; then echo "$_liveliness_probe"; fi)
 $(if [ -n "$_env_from" ] && [ "$_env_from" != "envFrom:" ]; then echo "$_env_from"| awk '{print "        " $0}'; fi)
 $(if [ -n "$_volume_mounts" ] && [ "$_volume_mounts" != "envFrom:" ]; then echo "$_volume_mounts"| awk '{print "        " $0}'; fi)
 $(if [ -n "$_lifecycle_policy" ]; then echo "$_lifecycle_policy" | awk '{print "        " $0}'; fi)
